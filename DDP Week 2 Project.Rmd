@@ -1,0 +1,76 @@
+---
+title: "Travis County Living Wage and Community Health Clinics"
+author: "Patrick Boswell"
+date: "January 29, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+```
+
+```{r}
+library(tigris)
+library(acs)
+library(stringr) 
+library(dplyr)
+library(leaflet)
+
+hhs <- read.csv(file = "c:/Users/Pappa/Documents/GitHub/Developing Data Products/Household-Income-Analysis--Travis-County/HHSL.csv",header = TRUE,sep = ',')
+
+# grab the spatial data (tigris)
+counties <- c(453, 491, 55, 209, 31, 53, 21)
+tracts <- tracts(state = 'TX', county = c(453, 491, 55, 209, 31, 53, 21), cb=TRUE)
+
+api.key.install("28a929278a0a292d693fc61a24c873779b48e600") 
+# create a geographic set to grab tabular data (acs)
+geo<-geo.make(state=c("TX"),
+              county=c(453, 491, 55, 209, 31, 53, 21), tract="*")
+
+income<-acs.fetch(endyear = 2014, span = 5, geography = geo,
+                  table.number = "B19001", col.names = "pretty")
+
+# convert to a data.frame for merging
+income_df <- data.frame(paste0(str_pad(income@geography$state, 2, "left", pad="0"), 
+                               str_pad(income@geography$county, 3, "left", pad="0"), 
+                               str_pad(income@geography$tract, 6, "left", pad="0")), 
+                        income@estimate[,c(1,2,3,4,5,6,7,8
+                                           )], 
+                        stringsAsFactors = FALSE)
+
+income_df <- mutate(income_df, below40 = income_df[,3]+income_df[,4]+income_df[,5]+income_df[,6]+income_df[,7]+income_df[,8])
+income_df <- select(income_df, c(1,2,10))
+rownames(income_df)<-1:nrow(income_df)
+names(income_df)<-c("GEOID", "total", "below_40")
+income_df$percent <- 100*(income_df$below_40/income_df$total)
+
+income_merged<- geo_join(tracts, income_df, "GEOID", "GEOID")
+# there are some tracts with no land that we should exclude
+income_merged <- income_merged[income_merged$ALAND>0,]
+
+popup <- paste0("GEOID: ", income_merged$GEOID, "<br>", "Percent of Households below $40k: ", round(income_merged$percent,2))
+pal <- colorNumeric(
+  palette = "YlGnBu",
+  domain = income_merged$percent
+)
+
+map<-leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addPolygons(data = income_merged, 
+              fillColor = ~pal(percent), 
+              color = "#b2aeae", # you need to use hex colors
+              fillOpacity = 0.7, 
+              weight = 1, 
+              smoothFactor = 0.2,
+              popup = popup) %>%
+  addLegend(pal = pal, 
+            values = income_merged$percent, 
+            position = "bottomright", 
+            title = "Percent of Households<br>below $40k",
+            labFormat = labelFormat(suffix = "%")) %>%
+  addMarkers(lat = hhs$lon, lng = hhs$lat, popup = hhs$Facility.Name)
+
+map
+```
+
+Map of Travis, Williamson, Caldwell, Hays, Blanco, and Burnet Counties household income < $40K with an overlay of Travis County Community Clinics.
